@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -8,10 +9,11 @@ namespace SMSGateWorkerService.Data
 {
     public class SmsGateDevice
     {
+        [Key]
         public int DeviceId { get; set; }
         public string DeviceUniqueId { get; set; }
-        public Guid? CustomerId { get; set; }
-        public int? BranchId { get; set; }
+        public Guid CustomerId { get; set; }
+        public int BranchId { get; set; }
         public string DeviceName { get; set; }
         public string BaseUrl { get; set; }
         public string Username { get; set; }

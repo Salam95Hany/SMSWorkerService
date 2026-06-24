@@ -14,7 +14,11 @@ builder.Services.AddDbContext<AgentDbContext>(options =>
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient<SmsGateService>();
 builder.Services.AddHttpClient<CloudService>();
+builder.Services.AddScoped<DeviceService>();
+builder.Services.AddScoped<InboxService>();
+builder.Services.AddScoped<SendMessageService>();
 builder.Services.AddHostedService<Worker>();
+
 var host = builder.Build();
 using (var scope = host.Services.CreateScope())
 {

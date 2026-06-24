@@ -1,7 +1,6 @@
 using SMSGateWorkerService.Data;
-using SMSGateWorkerService.Models;
+using SMSGateWorkerService.ErrorLogs;
 using SMSGateWorkerService.Services;
-using System.Text.Json;
 
 namespace SMSGateWorkerService
 {
@@ -9,12 +8,11 @@ namespace SMSGateWorkerService
     {
         private readonly IServiceProvider _serviceProvider;
         private readonly IConfiguration _configuration;
-        List<string> ProviderContain;
+        private DateTime _lastRetryTime = DateTime.MinValue;
         public Worker(IServiceProvider serviceProvider, IConfiguration configuration)
         {
             _serviceProvider = serviceProvider;
             _configuration = configuration;
-            ProviderContain = _configuration.GetSection("ProviderContain").Get<List<string>>();
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -26,10 +24,20 @@ namespace SMSGateWorkerService
                 try
                 {
                     await Sync();
+
+                    if (DateTime.Now - _lastRetryTime >= TimeSpan.FromHours(2))
+                    {
+                        using var scope = _serviceProvider.CreateScope();
+                        var cloud = scope.ServiceProvider.GetRequiredService<CloudService>();
+                        await ErrorLogStore.RetryAsync(async error => await cloud.SendLogException(error));
+                        _lastRetryTime = DateTime.UtcNow;
+                    }
                 }
                 catch (Exception ex)
                 {
-                    // TODO: Add logging
+                    using var scope = _serviceProvider.CreateScope();
+                    var cloud = scope.ServiceProvider.GetRequiredService<CloudService>();
+                    await cloud.SendLogException(CreateErrorLog(ex));
                 }
 
                 await Task.Delay(TimeSpan.FromSeconds(intervalSeconds), stoppingToken);
@@ -39,124 +47,31 @@ namespace SMSGateWorkerService
         private async Task Sync()
         {
             using var scope = _serviceProvider.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<AgentDbContext>();
+            var _context = scope.ServiceProvider.GetRequiredService<AgentDbContext>();
             var smsGate = scope.ServiceProvider.GetRequiredService<SmsGateService>();
             var cloud = scope.ServiceProvider.GetRequiredService<CloudService>();
+
             var device = scope.ServiceProvider.GetRequiredService<DeviceService>();
-            // Get all devices
-            var devices = db.SmsGateDevices.ToList();
-            var deviceDetails = new List<DeviceHealthDetails>();
+            var inbox = scope.ServiceProvider.GetRequiredService<InboxService>();
+            var sendsms = scope.ServiceProvider.GetRequiredService<SendMessageService>();
 
-            await device.SyncDevice(db, smsGate, cloud);
-            foreach (var device in devices)
-            {
-                await SyncDevice(device, db, smsGate);
-            }
-
-            await db.SaveChangesAsync();
-            // Send pending messages to cloud
-            await SendPendingMessages(db, cloud);
-
+            await device.SyncDevice(_context, smsGate, cloud);
+            await sendsms.SyncSendMessages(_context, smsGate, cloud);
+            await inbox.RefreshDeviceInbox(_context, smsGate, cloud);
         }
 
-        private async Task SyncDevice(SmsGateDevice device, AgentDbContext db, SmsGateService smsGate)
+        private SMSGateWorkerService.Models.ErrorLog CreateErrorLog(Exception ex)
         {
-            var syncTime = DateTime.Now;
-            int offset = 0;
-            const int limit = 100;
-            bool syncCompleted = true;
-            while (true)
+            return new SMSGateWorkerService.Models.ErrorLog
             {
-                var json = await smsGate.GetInbox(device, syncTime, limit, offset);
-                if (string.IsNullOrEmpty(json))
-                {
-                    syncCompleted = false;
-                    break;
-                }
-
-
-                var messages = ParseMessages(json, device.DeviceUniqueId);
-                if (messages.Count == 0)
-                    break;
-
-                foreach (var sms in messages)
-                {
-                    var exists = db.SmsMessages.Any(x => x.SmsGateId == sms.SmsGateId);
-
-                    if (!exists)
-                    {
-                        db.SmsMessages.Add(sms);
-                    }
-                }
-
-                if (messages.Count < limit)
-                    break;
-
-                offset += limit;
-            }
-
-            // update last sync after device finished
-            if (syncCompleted)
-                device.LastSyncDate = syncTime;
-        }
-
-
-
-        private async Task SendPendingMessages(AgentDbContext db, CloudService cloud)
-        {
-            var pending = db.SmsMessages.Where(x => !x.SentToCloud).ToList();
-            if (!pending.Any())
-                return;
-
-            var deviceIds = pending.Select(i => i.DeviceId).Distinct().ToList();
-            var devices = db.SmsGateDevices.Where(i => deviceIds.Contains(i.DeviceUniqueId)).ToList();
-            var Params = pending.Select(i =>
-            {
-                var device = devices.FirstOrDefault(x => x.DeviceUniqueId == i.DeviceId);
-                return new SmsMessageRequest
-                {
-                    SmsGateId = i.SmsGateId,
-                    CustomerId = device.CustomerId.Value,
-                    BranchId = device.BranchId.Value,
-                    Message = i.ContentPreview,
-                    DeviceName = i.SimNumber == 1 ? device.Sim1Name : device.Sim2Name,
-                    ProviderPhone = i.SimNumber == 1 ? device.Sim1Number : device.Sim2Number,
-                    ProviderName = i.Sender,
-                    SimNumber = i.SimNumber.ToString(),
-                    CreatedAt = i.CreatedAt
-                };
-            }).ToList();
-            var success = await cloud.SendBulkSms(Params);
-
-            if (success)
-            {
-                db.SmsMessages.RemoveRange(pending);
-                await db.SaveChangesAsync();
-            }
-        }
-
-        private List<SmsMessage> ParseMessages(string json, string deviceId)
-        {
-            var options = new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
+                Message = ex.Message,
+                StackTrace = ex.StackTrace,
+                Service = ex.Data["Service"]?.ToString(),
+                Method = ex.Data["Method"]?.ToString(),
+                DeviceId = ex.Data["DeviceId"]?.ToString(),
+                CustomerId = Guid.TryParse(ex.Data["CustomerId"]?.ToString(), out var customerId) ? customerId : Guid.Empty,
+                BranchId = int.TryParse(ex.Data["BranchId"]?.ToString(), out var branchId) ? branchId : 0
             };
-            var smsGateMessages = JsonSerializer.Deserialize<List<SmsGateInboxMessage>>(json, options);
-
-            if (smsGateMessages == null)
-                return new List<SmsMessage>();
-
-            return smsGateMessages.Select(x => new SmsMessage
-            {
-                SmsGateId = x.Id,
-                DeviceId = deviceId,
-                ContentPreview = x.ContentPreview,
-                Sender = x.Sender,
-                SimNumber = x.SimNumber,
-                CreatedAt = x.CreatedAt
-            }).ToList();
         }
-
-
     }
 }

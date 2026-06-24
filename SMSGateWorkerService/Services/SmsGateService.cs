@@ -15,12 +15,10 @@ namespace SMSGateWorkerService.Services
             _client = client;
         }
 
-        public async Task<string> GetInbox(SmsGateDevice device, DateTime syncDate, int limit = 100, int offset = 0)
+        public async Task<string> GetInbox(SmsGateDevice device,DateTime from, DateTime to, int limit = 100, int offset = 0)
         {
             try
             {
-                var from = device.LastSyncDate;
-                var to = syncDate;
                 var url =
                     $"{device.BaseUrl}/inbox" +
                     $"?type=SMS" +
@@ -33,7 +31,8 @@ namespace SMSGateWorkerService.Services
                 using var request = new HttpRequestMessage(HttpMethod.Get, url);
                 var auth = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{device.Username}:{device.Password}"));
                 request.Headers.Authorization = new AuthenticationHeaderValue("Basic", auth);
-                var response = await _client.SendAsync(request);
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                var response = await _client.SendAsync(request, cts.Token);
                 response.EnsureSuccessStatusCode();
 
                 return await response.Content.ReadAsStringAsync();
@@ -42,7 +41,6 @@ namespace SMSGateWorkerService.Services
             {
                 return null;
             }
-
         }
 
         public async Task<List<DeviceHealthResult>> GetDeviceHealth(List<SmsGateDevice> devices)
@@ -62,7 +60,8 @@ namespace SMSGateWorkerService.Services
                         using var request = new HttpRequestMessage(HttpMethod.Get, url);
                         var auth = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{device.Username}:{device.Password}"));
                         request.Headers.Authorization = new AuthenticationHeaderValue("Basic", auth);
-                        var response = await _client.SendAsync(request);
+                        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                        var response = await _client.SendAsync(request, cts.Token);
                         response.EnsureSuccessStatusCode();
                         var json = await response.Content.ReadAsStringAsync();
                         var health = JsonSerializer.Deserialize<SystemPing>(json,
@@ -119,7 +118,8 @@ namespace SMSGateWorkerService.Services
                         using var request = new HttpRequestMessage(HttpMethod.Get, url);
                         var auth = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{device.Username}:{device.Password}"));
                         request.Headers.Authorization = new AuthenticationHeaderValue("Basic", auth);
-                        var response = await _client.SendAsync(request);
+                        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                        var response = await _client.SendAsync(request, cts.Token);
                         response.EnsureSuccessStatusCode();
                         var json = await response.Content.ReadAsStringAsync();
                         var result = JsonSerializer.Deserialize<List<DeviceDetails>>(json, new JsonSerializerOptions
@@ -164,7 +164,8 @@ namespace SMSGateWorkerService.Services
                 request.Content = new StringContent(json, Encoding.UTF8, "application/json");
                 var auth = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{device.Username}:{device.Password}"));
                 request.Headers.Authorization = new AuthenticationHeaderValue("Basic", auth);
-                var response = await _client.SendAsync(request);
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                var response = await _client.SendAsync(request, cts.Token);
                 response.EnsureSuccessStatusCode();
 
                 return await response.Content.ReadAsStringAsync();

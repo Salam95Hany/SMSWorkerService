@@ -1,12 +1,8 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using SMSGateWorkerService.Data;
+using SMSGateWorkerService.ErrorLog;
 using SMSGateWorkerService.Models;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using System.Text.Json;
-using System.Threading.Tasks;
 
 namespace SMSGateWorkerService.Services
 {
@@ -29,65 +25,84 @@ namespace SMSGateWorkerService.Services
         }
         public async Task GetDevices(AgentDbContext _context, CloudService cloud)
         {
-            var LatestVersion = _context.DeviceSyncVersions.FirstOrDefault();
-            var DevicesRes = await cloud.GetAllDevices(CustomerId, BranchId, LatestVersion.CurrentVersion);
-            if (DevicesRes == null)
-                return;
-
-            var LocalDevices = await _context.SmsGateDevices.Where(i => i.IsActive).ToListAsync();
-            var Devices = ParseDevices(DevicesRes);
-            if (LatestVersion.CurrentVersion == 0 || Devices.Changes.Any(i => i.Action == ChangeLogAction.Created))
+            try
             {
-                await _context.SmsGateDevices.AddRangeAsync(Devices.Devices);
-            }
+                var LatestVersion = _context.DeviceSyncVersions.FirstOrDefault();
+                var DevicesRes = await cloud.GetAllDevices(CustomerId, BranchId, LatestVersion.CurrentVersion);
+                if (DevicesRes == null)
+                    return;
 
-            if (Devices.Changes.Any(i => i.Action == ChangeLogAction.Deleted))
-            {
-                var Deleted = Devices.Changes.Where(i => i.Action == ChangeLogAction.Deleted).ToList();
-                foreach (var item in Deleted)
+                var LocalDevices = await _context.SmsGateDevices.Where(i => i.IsActive).ToListAsync();
+                var Devices = ParseDevices(DevicesRes);
+                if (LatestVersion.CurrentVersion == 0 || Devices.Changes.Any(i => i.Action == ChangeLogAction.Created))
                 {
-                    var DelDevice = LocalDevices.FirstOrDefault(i => i.DeviceUniqueId == item.DeviceId);
-                    if (DelDevice != null)
-                        DelDevice.IsActive = bool.Parse(item.FieldValue);
+                    await _context.SmsGateDevices.AddRangeAsync(Devices.Devices);
                 }
-            }
 
-            if (Devices.Changes.Any(i => i.Action == ChangeLogAction.Updated))
-            {
-                var Updated = Devices.Changes.Where(i => i.Action == ChangeLogAction.Updated).ToList();
-                var properties = typeof(SmsGateDevice).GetProperties().ToDictionary(x => x.Name, x => x);
-
-                foreach (var item in Updated)
+                if (Devices.Changes.Any(i => i.Action == ChangeLogAction.Deleted))
                 {
-                    var localDevice = LocalDevices.FirstOrDefault(i => i.DeviceUniqueId == item.DeviceId);
-
-                    if (localDevice == null)
-                        continue;
-
-                    if (!properties.TryGetValue(item.FieldKey, out var property))
-                        continue;
-
-                    if (!property.CanWrite)
-                        continue;
-
-                    var value = ConvertValue(item.FieldValue, Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType);
-                    property.SetValue(localDevice, value);
+                    var Deleted = Devices.Changes.Where(i => i.Action == ChangeLogAction.Deleted).ToList();
+                    foreach (var item in Deleted)
+                    {
+                        var DelDevice = LocalDevices.FirstOrDefault(i => i.DeviceUniqueId == item.DeviceId);
+                        if (DelDevice != null)
+                            DelDevice.IsActive = bool.Parse(item.FieldValue);
+                    }
                 }
-            }
 
-            LatestVersion.CurrentVersion = Devices.LatestVersion;
-            await _context.SaveChangesAsync();
+                if (Devices.Changes.Any(i => i.Action == ChangeLogAction.Updated))
+                {
+                    var Updated = Devices.Changes.Where(i => i.Action == ChangeLogAction.Updated).ToList();
+                    var properties = typeof(SmsGateDevice).GetProperties().ToDictionary(x => x.Name, x => x);
+
+                    foreach (var item in Updated)
+                    {
+                        var localDevice = LocalDevices.FirstOrDefault(i => i.DeviceUniqueId == item.DeviceId);
+
+                        if (localDevice == null)
+                            continue;
+
+                        if (!properties.TryGetValue(item.FieldKey, out var property))
+                            continue;
+
+                        if (!property.CanWrite)
+                            continue;
+
+                        var value = ConvertValue(item.FieldValue, Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType);
+                        property.SetValue(localDevice, value);
+                    }
+                }
+
+                LatestVersion.CurrentVersion = Devices.LatestVersion;
+                await _context.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                ex.AddException("DeviceService", "SyncDeviceDetails", CustomerId, BranchId);
+                throw;
+            }
         }
 
         public async Task SyncDeviceDetails(AgentDbContext _context, SmsGateService smsGate, CloudService cloudService)
         {
-            var LocalDevices = await _context.SmsGateDevices.Where(i => i.IsActive).ToListAsync();
-            var SystemPings = await smsGate.GetDeviceHealth(LocalDevices);
-            if (SystemPings != null && SystemPings.Count > 0)
+            try
             {
-                var deviceDetails = ParseSystemPing(SystemPings);
-                await cloudService.SendBulkDeviceDetails(deviceDetails);
+                var LocalDevices = await _context.SmsGateDevices.Where(i => i.IsActive).ToListAsync();
+                var SystemPingsTask = smsGate.GetDeviceHealth(LocalDevices);
+                var DevicesLastSeenTask = smsGate.GetDevice(LocalDevices);
+                await Task.WhenAll(SystemPingsTask, DevicesLastSeenTask);
+                if (SystemPingsTask.Result != null && SystemPingsTask.Result.Count > 0)
+                {
+                    var deviceDetails = ParseSystemPing(SystemPingsTask.Result, LocalDevices, DevicesLastSeenTask.Result);
+                    await cloudService.SendBulkDeviceDetails(deviceDetails);
+                }
             }
+            catch (Exception ex)
+            {
+                ex.AddException("DeviceService", "SyncDeviceDetails", CustomerId, BranchId);
+                throw;
+            }
+
         }
 
         private DeviceWorkerResponse ParseDevices(string json)
@@ -105,18 +120,37 @@ namespace SMSGateWorkerService.Services
             return response;
         }
 
-        private List<DeviceHealthDetails> ParseSystemPing(List<DeviceHealthResult> Model)
+        private List<DeviceHealthDetails> ParseSystemPing(List<DeviceHealthResult> model, List<SmsGateDevice> devices, List<DeviceDetails> lastSeenDevices)
         {
+            var devicesLookup = devices.ToDictionary(x => x.DeviceUniqueId);
+            var lastSeenLookup = lastSeenDevices.ToDictionary(x => x.Id);
+            var result = new List<DeviceHealthDetails>(model.Count);
 
-            return Model.Select(i => new DeviceHealthDetails
+            foreach (var item in model)
             {
-                DeviceId = i.DeviceId,
-                MessagesFailed = GetValue(i.Health, "messages:failed"),
-                ConnectionStatus = GetValue(i.Health, "connection:status"),
-                ConnectionTransport = GetValue(i.Health, "connection:transport"),
-                BatteryLevel = GetValue(i.Health, "battery:level"),
-                BatteryCharging = GetValue(i.Health, "battery:charging") != 0
-            }).ToList();
+                devicesLookup.TryGetValue(item.DeviceId, out var device);
+                lastSeenLookup.TryGetValue(item.DeviceId, out var lastSeenDevice);
+
+                if (device == null)
+                    continue;
+
+                result.Add(new DeviceHealthDetails
+                {
+                    DeviceId = item.DeviceId,
+                    CustomerId = device.CustomerId,
+                    BranchId = device.BranchId,
+                    DeviceName = device.DeviceName,
+                    MessagesFailed = GetValue(item.Health, "messages:failed"),
+                    ConnectionStatus = GetValue(item.Health, "connection:status"),
+                    ConnectionTransport = GetValue(item.Health, "connection:transport"),
+                    BatteryLevel = GetValue(item.Health, "battery:level"),
+                    BatteryCharging = GetValue(item.Health, "battery:charging") != 0,
+                    LastSeen = lastSeenDevice.LastSeen,
+                    LastSyncDate = device.LastSyncDate
+                });
+            }
+
+            return result;
         }
 
 
