@@ -92,7 +92,8 @@ namespace SMSGateWorkerService.Services
             }
             catch (Exception ex)
             {
-                return null;
+                ex.AddException("CloudService", "GetAllDevices", CustomerId, BranchId);
+                throw;
             }
 
         }

@@ -20,13 +20,13 @@ namespace SMSGateWorkerService.Services
             try
             {
                 var url =
-                    $"{device.BaseUrl}/inbox" +
+                    $"{device.BaseUrl}:8080/inbox" +
                     $"?type=SMS" +
                     $"&limit={limit}" +
                     $"&offset={offset}" +
                     $"&from={Uri.EscapeDataString(from.ToString("yyyy-MM-ddTHH:mm:ssZ"))}" +
                     $"&to={Uri.EscapeDataString(to.ToString("yyyy-MM-ddTHH:mm:ssZ"))}" +
-                    $"&deviceId={device.DeviceId}";
+                    $"&deviceId={device.DeviceUniqueId}";
 
                 using var request = new HttpRequestMessage(HttpMethod.Get, url);
                 var auth = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{device.Username}:{device.Password}"));
@@ -56,12 +56,12 @@ namespace SMSGateWorkerService.Services
 
                     try
                     {
-                        var url = $"{device.BaseUrl}/health";
+                        var url = $"{device.BaseUrl}:8080/health";
                         using var request = new HttpRequestMessage(HttpMethod.Get, url);
                         var auth = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{device.Username}:{device.Password}"));
                         request.Headers.Authorization = new AuthenticationHeaderValue("Basic", auth);
-                        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                        var response = await _client.SendAsync(request, cts.Token);
+                        //using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                        var response = await _client.SendAsync(request);
                         response.EnsureSuccessStatusCode();
                         var json = await response.Content.ReadAsStringAsync();
                         var health = JsonSerializer.Deserialize<SystemPing>(json,
@@ -93,7 +93,7 @@ namespace SMSGateWorkerService.Services
                     }
                 });
 
-                return (await Task.WhenAll(tasks)).Where(x => x != null).ToList();
+                return (await Task.WhenAll(tasks)).Where(x => x != null && x.Health != null).ToList();
             }
             catch
             {
@@ -114,7 +114,7 @@ namespace SMSGateWorkerService.Services
 
                     try
                     {
-                        var url = $"{device.BaseUrl}/device";
+                        var url = $"{device.BaseUrl}:8080/device";
                         using var request = new HttpRequestMessage(HttpMethod.Get, url);
                         var auth = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{device.Username}:{device.Password}"));
                         request.Headers.Authorization = new AuthenticationHeaderValue("Basic", auth);
@@ -151,7 +151,7 @@ namespace SMSGateWorkerService.Services
         {
             try
             {
-                var url = $"{device.BaseUrl}/inbox/refresh";
+                var url = $"{device.BaseUrl}:8080/inbox/refresh";
                 var body = new
                 {
                     deviceId = device.DeviceId,

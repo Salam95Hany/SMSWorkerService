@@ -1,6 +1,7 @@
 using SMSGateWorkerService.Data;
 using SMSGateWorkerService.ErrorLogs;
 using SMSGateWorkerService.Services;
+using System.Diagnostics;
 
 namespace SMSGateWorkerService
 {
@@ -23,8 +24,10 @@ namespace SMSGateWorkerService
             {
                 try
                 {
+                    var stopwatch = Stopwatch.StartNew();
                     await Sync();
-
+                    stopwatch.Stop();
+                    Console.WriteLine($"Sync completed in {stopwatch.ElapsedMilliseconds} ms");
                     if (DateTime.Now - _lastRetryTime >= TimeSpan.FromHours(2))
                     {
                         using var scope = _serviceProvider.CreateScope();

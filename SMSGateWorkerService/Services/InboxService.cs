@@ -22,7 +22,7 @@ namespace SMSGateWorkerService.Services
         public async Task RefreshDeviceInbox(AgentDbContext _context, SmsGateService smsGate, CloudService cloud)
         {
             var Json = await cloud.GetDeviceRefreshInboxSetting(CustomerId, BranchId);
-            if (Json != null)
+            if (!string.IsNullOrEmpty(Json))
             {
                 var Options = new JsonSerializerOptions
                 {
@@ -54,9 +54,6 @@ namespace SMSGateWorkerService.Services
                     if (messages.Count == 0)
                         break;
 
-                    if (messages.Count < limit)
-                        break;
-
                     var Params = messages.Select(i =>
                     {
                         return new SmsMessageRequest
@@ -73,6 +70,9 @@ namespace SMSGateWorkerService.Services
                         };
                     }).ToList();
                     var success = await cloud.SendRefreshBulkSms(Params);
+
+                    if (messages.Count < limit)
+                        break;
 
                     offset += limit;
                 }

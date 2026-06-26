@@ -34,9 +34,11 @@ namespace SMSGateWorkerService.Services
 
                 var LocalDevices = await _context.SmsGateDevices.Where(i => i.IsActive).ToListAsync();
                 var Devices = ParseDevices(DevicesRes);
-                if (LatestVersion.CurrentVersion == 0 || Devices.Changes.Any(i => i.Action == ChangeLogAction.Created))
+                if (LatestVersion.CurrentVersion == 0 || Devices.Devices.Count > 0)
                 {
-                    await _context.SmsGateDevices.AddRangeAsync(Devices.Devices);
+                    var NewDevices = Devices.Devices.Where(d => !LocalDevices.Any(ld => ld.DeviceUniqueId == d.DeviceUniqueId)).ToList();
+                    if (NewDevices.Any())
+                        await _context.SmsGateDevices.AddRangeAsync(NewDevices);
                 }
 
                 if (Devices.Changes.Any(i => i.Action == ChangeLogAction.Deleted))
@@ -73,8 +75,11 @@ namespace SMSGateWorkerService.Services
                     }
                 }
 
-                LatestVersion.CurrentVersion = Devices.LatestVersion;
-                await _context.SaveChangesAsync();
+                if (Devices.Devices.Count > 0 || Devices.Changes.Count > 0)
+                {
+                    LatestVersion.CurrentVersion = Devices.LatestVersion;
+                    await _context.SaveChangesAsync();
+                }
             }
             catch (Exception ex)
             {
@@ -131,7 +136,7 @@ namespace SMSGateWorkerService.Services
                 devicesLookup.TryGetValue(item.DeviceId, out var device);
                 lastSeenLookup.TryGetValue(item.DeviceId, out var lastSeenDevice);
 
-                if (device == null)
+                if (device == null || lastSeenDevice?.LastSeen == null)
                     continue;
 
                 result.Add(new DeviceHealthDetails
