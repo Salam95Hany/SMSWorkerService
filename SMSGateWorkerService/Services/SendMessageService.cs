@@ -18,13 +18,15 @@ namespace SMSGateWorkerService.Services
 
         public async Task SyncSendMessages(AgentDbContext _context, SmsGateService smsGate, CloudService cloud)
         {
-            var devices = _context.SmsGateDevices.ToList();
-            foreach (var device in devices)
-                await SyncDevice(device, _context, smsGate);
+            var devices = _context.SmsGateDevices.Where(i => i.IsActive).ToList();
+            if (devices.Any())
+            {
+                foreach (var device in devices)
+                    await SyncDevice(device, _context, smsGate);
 
-            await _context.SaveChangesAsync();
-            await SendPendingMessages(_context, cloud);
-
+                await _context.SaveChangesAsync();
+                await SendPendingMessages(_context, cloud);
+            }
         }
 
         private async Task SyncDevice(SmsGateDevice device, AgentDbContext db, SmsGateService smsGate)
@@ -109,7 +111,7 @@ namespace SMSGateWorkerService.Services
             }
             catch (Exception ex)
             {
-                ex.AddException("SendMessageService", "SendPendingMessages",Guid.Parse("4E4F1CDF-192C-4DB9-B16D-CB633A874FF4"), 1);
+                ex.AddException("SendMessageService", "SendPendingMessages", Guid.Parse("4E4F1CDF-192C-4DB9-B16D-CB633A874FF4"), 1);
                 throw;
             }
 
