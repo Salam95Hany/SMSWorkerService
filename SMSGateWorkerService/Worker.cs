@@ -1,7 +1,6 @@
 using SMSGateWorkerService.Data;
 using SMSGateWorkerService.ErrorLogs;
 using SMSGateWorkerService.Services;
-using System.Diagnostics;
 
 namespace SMSGateWorkerService
 {
