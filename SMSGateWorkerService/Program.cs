@@ -18,6 +18,11 @@ builder.Services.AddHttpClient<CloudService>((sp, client) =>
     var config = sp.GetRequiredService<IConfiguration>();
     client.BaseAddress = new Uri(config["Cloud:BaseUrl"]!);
 });
+builder.Services.AddHttpClient<ConnectivityService>((sp, client) =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["Cloud:BaseUrl"]!);
+    client.Timeout = TimeSpan.FromSeconds(5);
+});
 builder.Services.AddScoped<DeviceService>();
 builder.Services.AddScoped<InboxService>();
 builder.Services.AddScoped<SendMessageService>();

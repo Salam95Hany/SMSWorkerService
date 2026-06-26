@@ -18,20 +18,31 @@ namespace SMSGateWorkerService
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             var interval = TimeSpan.FromSeconds(_configuration.GetValue<int>("Sync:IntervalSeconds"));
-
-            await WaitForServerAsync(stoppingToken);
+            using (var scope = _serviceProvider.CreateScope())
+            {
+                var connectivity =scope.ServiceProvider.GetRequiredService<ConnectivityService>();
+                await connectivity.WaitForServerAsync(stoppingToken);
+            }
 
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
                 {
-                    await Sync();
+
+                    using var scope = _serviceProvider.CreateScope();
+                    var connectivity = scope.ServiceProvider.GetRequiredService<ConnectivityService>();
+                    if (!await connectivity.IsServerAvailable())
+                    {
+                        await Task.Delay(interval, stoppingToken);
+                        continue;
+                    }
+
+                    await Sync(scope.ServiceProvider);
 
                     if (DateTime.UtcNow - _lastRetryTime >= TimeSpan.FromHours(2))
                     {
                         try
                         {
-                            using var scope = _serviceProvider.CreateScope();
                             var cloud = scope.ServiceProvider.GetRequiredService<CloudService>();
                             await ErrorLogStore.RetryAsync(async error => await cloud.SendLogException(error));
                             _lastRetryTime = DateTime.UtcNow;
@@ -49,8 +60,8 @@ namespace SMSGateWorkerService
                 {
                     try
                     {
-                        using var scope = _serviceProvider.CreateScope();
-                        var cloud = scope.ServiceProvider.GetRequiredService<CloudService>();
+                        using var errorScope = _serviceProvider.CreateScope();
+                        var cloud = errorScope.ServiceProvider.GetRequiredService<CloudService>();
                         await cloud.SendLogException(CreateErrorLog(ex));
                     }
                     catch
@@ -69,16 +80,15 @@ namespace SMSGateWorkerService
             }
         }
 
-        private async Task Sync()
+        private async Task Sync(IServiceProvider provider)
         {
-            using var scope = _serviceProvider.CreateScope();
-            var _context = scope.ServiceProvider.GetRequiredService<AgentDbContext>();
-            var smsGate = scope.ServiceProvider.GetRequiredService<SmsGateService>();
-            var cloud = scope.ServiceProvider.GetRequiredService<CloudService>();
+            var _context = provider.GetRequiredService<AgentDbContext>();
+            var smsGate = provider.GetRequiredService<SmsGateService>();
+            var cloud = provider.GetRequiredService<CloudService>();
 
-            var device = scope.ServiceProvider.GetRequiredService<DeviceService>();
-            var inbox = scope.ServiceProvider.GetRequiredService<InboxService>();
-            var sendsms = scope.ServiceProvider.GetRequiredService<SendMessageService>();
+            var device = provider.GetRequiredService<DeviceService>();
+            var inbox = provider.GetRequiredService<InboxService>();
+            var sendsms = provider.GetRequiredService<SendMessageService>();
 
             await device.SyncDevice(_context, smsGate, cloud);
             await sendsms.SyncSendMessages(_context, smsGate, cloud);
@@ -97,28 +107,6 @@ namespace SMSGateWorkerService
                 CustomerId = Guid.TryParse(ex.Data["CustomerId"]?.ToString(), out var customerId) ? customerId : Guid.Empty,
                 BranchId = int.TryParse(ex.Data["BranchId"]?.ToString(), out var branchId) ? branchId : 0
             };
-        }
-
-
-        private async Task WaitForServerAsync(CancellationToken token)
-        {
-            using var client = new HttpClient
-            {
-                Timeout = TimeSpan.FromSeconds(5)
-            };
-
-            while (!token.IsCancellationRequested)
-            {
-                try
-                {
-                    using var response = await client.GetAsync("https://smsreader-api.runasp.net/", token);
-                    return;
-                }
-                catch
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(5), token);
-                }
-            }
         }
     }
 }
