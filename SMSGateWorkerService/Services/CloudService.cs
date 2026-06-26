@@ -12,7 +12,6 @@ namespace SMSGateWorkerService.Services
         public CloudService(HttpClient client, IConfiguration config)
         {
             _client = client;
-            _client.BaseAddress = new Uri(config["Cloud:BaseUrl"]);
         }
 
         public async Task<bool> SendBulkSms(List<SmsMessageRequest> messages)

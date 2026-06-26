@@ -13,7 +13,11 @@ builder.Services.AddDbContext<AgentDbContext>(options =>
 
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient<SmsGateService>();
-builder.Services.AddHttpClient<CloudService>();
+builder.Services.AddHttpClient<CloudService>((sp, client) =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    client.BaseAddress = new Uri(config["Cloud:BaseUrl"]!);
+});
 builder.Services.AddScoped<DeviceService>();
 builder.Services.AddScoped<InboxService>();
 builder.Services.AddScoped<SendMessageService>();

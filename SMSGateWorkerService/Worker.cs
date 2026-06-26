@@ -17,7 +17,9 @@ namespace SMSGateWorkerService
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            var intervalSeconds = _configuration.GetValue<int>("Sync:IntervalSeconds");
+            var interval = TimeSpan.FromSeconds(_configuration.GetValue<int>("Sync:IntervalSeconds"));
+
+            await WaitForServerAsync(stoppingToken);
 
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -25,22 +27,45 @@ namespace SMSGateWorkerService
                 {
                     await Sync();
 
-                    if (DateTime.Now - _lastRetryTime >= TimeSpan.FromHours(2))
+                    if (DateTime.UtcNow - _lastRetryTime >= TimeSpan.FromHours(2))
                     {
-                        using var scope = _serviceProvider.CreateScope();
-                        var cloud = scope.ServiceProvider.GetRequiredService<CloudService>();
-                        await ErrorLogStore.RetryAsync(async error => await cloud.SendLogException(error));
-                        _lastRetryTime = DateTime.UtcNow;
+                        try
+                        {
+                            using var scope = _serviceProvider.CreateScope();
+                            var cloud = scope.ServiceProvider.GetRequiredService<CloudService>();
+                            await ErrorLogStore.RetryAsync(async error => await cloud.SendLogException(error));
+                            _lastRetryTime = DateTime.UtcNow;
+                        }
+                        catch
+                        {
+                        }
                     }
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
                 }
                 catch (Exception ex)
                 {
-                    using var scope = _serviceProvider.CreateScope();
-                    var cloud = scope.ServiceProvider.GetRequiredService<CloudService>();
-                    await cloud.SendLogException(CreateErrorLog(ex));
+                    try
+                    {
+                        using var scope = _serviceProvider.CreateScope();
+                        var cloud = scope.ServiceProvider.GetRequiredService<CloudService>();
+                        await cloud.SendLogException(CreateErrorLog(ex));
+                    }
+                    catch
+                    {
+                    }
                 }
 
-                await Task.Delay(TimeSpan.FromSeconds(intervalSeconds), stoppingToken);
+                try
+                {
+                    await Task.Delay(interval, stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
             }
         }
 
@@ -72,6 +97,28 @@ namespace SMSGateWorkerService
                 CustomerId = Guid.TryParse(ex.Data["CustomerId"]?.ToString(), out var customerId) ? customerId : Guid.Empty,
                 BranchId = int.TryParse(ex.Data["BranchId"]?.ToString(), out var branchId) ? branchId : 0
             };
+        }
+
+
+        private async Task WaitForServerAsync(CancellationToken token)
+        {
+            using var client = new HttpClient
+            {
+                Timeout = TimeSpan.FromSeconds(5)
+            };
+
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    using var response = await client.GetAsync("https://smsreader-api.runasp.net/", token);
+                    return;
+                }
+                catch
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(5), token);
+                }
+            }
         }
     }
 }
