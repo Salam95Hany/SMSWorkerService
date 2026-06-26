@@ -15,7 +15,7 @@ namespace SMSGateWorkerService.Services
             _client = client;
         }
 
-        public async Task<string> GetInbox(SmsGateDevice device,DateTime from, DateTime to, int limit = 100, int offset = 0)
+        public async Task<string> GetInbox(SmsGateDevice device, DateTime from, DateTime to, int limit = 100, int offset = 0)
         {
             try
             {
@@ -60,15 +60,29 @@ namespace SMSGateWorkerService.Services
                         using var request = new HttpRequestMessage(HttpMethod.Get, url);
                         var auth = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{device.Username}:{device.Password}"));
                         request.Headers.Authorization = new AuthenticationHeaderValue("Basic", auth);
-                        //using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                        var response = await _client.SendAsync(request);
-                        response.EnsureSuccessStatusCode();
+                        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                        var response = await _client.SendAsync(request, cts.Token);
+                        //response.EnsureSuccessStatusCode();
                         var json = await response.Content.ReadAsStringAsync();
-                        var health = JsonSerializer.Deserialize<SystemPing>(json,
-                            new JsonSerializerOptions
+                        SystemPing? health = null;
+
+                        try
+                        {
+                            health = JsonSerializer.Deserialize<SystemPing>(
+                                json,
+                                new JsonSerializerOptions
+                                {
+                                    PropertyNameCaseInsensitive = true
+                                });
+                        }
+                        catch
+                        {
+                            return new DeviceHealthResult
                             {
-                                PropertyNameCaseInsensitive = true
-                            });
+                                DeviceId = device.DeviceUniqueId,
+                                Health = null
+                            };
+                        }
 
                         if (health == null)
                             return null;
