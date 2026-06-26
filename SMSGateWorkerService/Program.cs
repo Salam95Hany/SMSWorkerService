@@ -24,6 +24,7 @@ using (var scope = host.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AgentDbContext>();
     db.Database.EnsureCreated();
+    await SeedData.Initialize(db);
 }
 
 host.Run();
