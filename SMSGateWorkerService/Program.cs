@@ -4,11 +4,12 @@ using SMSGateWorkerService.Data;
 using SMSGateWorkerService.Services;
 
 var builder = Host.CreateApplicationBuilder(args);
+var dbPath = Path.Combine(AppContext.BaseDirectory, "smsgate-agent.db");
 
 builder.Services.AddWindowsService();
 builder.Services.AddDbContext<AgentDbContext>(options =>
 {
-    options.UseSqlite(builder.Configuration.GetConnectionString("Default"));
+    options.UseSqlite($"Data Source={dbPath}");
 });
 
 builder.Services.AddHttpClient();
