@@ -34,7 +34,7 @@ namespace SMSGateWorkerService.Services
 
                 var LocalDevices = await _context.SmsGateDevices.Where(i => i.IsActive).ToListAsync();
                 var Devices = ParseDevices(DevicesRes);
-                if (LatestVersion.CurrentVersion == 0 || Devices.Devices.Count > 0)
+                if (LatestVersion.CurrentVersion == 0 && Devices.Devices.Count > 0)
                 {
                     var NewDevices = Devices.Devices.Where(d => !LocalDevices.Any(ld => ld.DeviceUniqueId == d.DeviceUniqueId)).ToList();
                     NewDevices.ForEach(i => i.LastSyncDate = DateTime.Now);
